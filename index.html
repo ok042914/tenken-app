@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#FF6B6B">
+  <title>消防設備点検</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <button id="btn-back" class="btn-back hidden">← 戻る</button>
+      <h1 class="app-title">🔥 消防設備点検</h1>
+      <div class="header-spacer"></div>
+    </div>
+    <div id="breadcrumb" class="breadcrumb hidden"></div>
+  </header>
+
+  <main id="main">
+    <!-- Screen 1: 工場選択 -->
+    <section id="screen-factories" class="screen active">
+      <div class="screen-title-row">
+        <h2>🏭 工場を選択</h2>
+      </div>
+      <div id="factory-list" class="card-grid"></div>
+    </section>
+
+    <!-- Screen 2: 部屋選択 -->
+    <section id="screen-rooms" class="screen">
+      <div class="screen-title-row">
+        <h2>🚪 部屋を選択</h2>
+      </div>
+      <div id="room-list" class="card-grid"></div>
+    </section>
+
+    <!-- Screen 3: 設備一覧 -->
+    <section id="screen-equipment" class="screen">
+      <div class="screen-title-row">
+        <h2>🧯 設備一覧</h2>
+      </div>
+      <div id="equipment-list" class="card-grid"></div>
+    </section>
+
+    <!-- Screen 4: 点検入力 -->
+    <section id="screen-inspection" class="screen">
+      <div class="screen-title-row">
+        <h2>📋 点検入力</h2>
+      </div>
+      <div id="inspection-form" class="inspection-form"></div>
+      <div class="save-area">
+        <button id="btn-save" class="btn-save">💾 保存</button>
+        <div id="save-status" class="save-status"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span id="deploy-info">v1.0.0 &nbsp;|&nbsp; 2026-05-19</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
