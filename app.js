@@ -204,7 +204,12 @@ async function loadAllFactoryProgress(factories) {
 // ===== 部屋一覧 =====
 async function loadRoomsScreen(factoryId) {
   const list = document.getElementById('room-list');
+  const summaryEl = document.getElementById('factory-plan-summary');
+  const wrapEl = document.getElementById('factory-plan-wrap');
+
   list.innerHTML = '<div class="loading">読み込み中...</div>';
+  summaryEl.classList.add('hidden');
+  wrapEl.innerHTML = '';
 
   const { data: rooms, error } = await db
     .from('rooms')
@@ -229,6 +234,184 @@ async function loadRoomsScreen(factoryId) {
     });
     list.appendChild(card);
   });
+
+  loadFactoryPlanTable(factoryId, rooms);
+}
+
+async function loadFactoryPlanTable(factoryId, rooms) {
+  const summaryEl = document.getElementById('factory-plan-summary');
+  const wrapEl = document.getElementById('factory-plan-wrap');
+  wrapEl.innerHTML = '<div class="loading">計画表を読み込み中...</div>';
+
+  const roomIds = rooms.map(r => r.id);
+  if (roomIds.length === 0) { wrapEl.innerHTML = ''; return; }
+
+  const { data: equipments, error } = await db
+    .from('equipment')
+    .select('*')
+    .in('room_id', roomIds)
+    .order('room_id')
+    .order('id');
+
+  if (error || !equipments || equipments.length === 0) { wrapEl.innerHTML = ''; return; }
+
+  const equipIds = equipments.map(e => e.id);
+  await loadEquipmentStatuses(equipIds);
+
+  const currentYear = new Date().getFullYear();
+
+  const { data: confirmations } = await db
+    .from('inspection_results')
+    .select('equipment_id')
+    .in('equipment_id', equipIds)
+    .eq('record_type', 'confirmation')
+    .gte('confirmed_at', `${currentYear}-01-01T00:00:00.000Z`);
+  const confirmedSet = new Set((confirmations || []).map(c => c.equipment_id));
+
+  const equipByRoom = {};
+  rooms.forEach(r => { equipByRoom[r.id] = []; });
+  equipments.forEach(e => { if (equipByRoom[e.room_id]) equipByRoom[e.room_id].push(e); });
+
+  let totalTarget = 0, totalDone = 0, totalRequired = 0, totalOverdue = 0;
+  equipments.forEach(e => {
+    const isComplete = state.equipmentStatus[e.id] === 'complete';
+    const isConfirmed = confirmedSet.has(e.id);
+    const info = getCellInfo(e, currentYear, currentYear, isComplete, isConfirmed);
+    if (info.type === 'empty' || info.type === 'future' || info.type === 'confirmed') return;
+    totalTarget++;
+    if (info.type === 'done') totalDone++;
+    else if (info.type === 'overdue') totalOverdue++;
+    else totalRequired++;
+  });
+
+  summaryEl.innerHTML = `今年の点検: 全${totalTarget}件中 ✅ 完了${totalDone}件 🔴 未実施${totalRequired}件 ⚠️ 期限超過${totalOverdue}件`;
+  summaryEl.classList.remove('hidden');
+
+  renderFactoryPlanTable(rooms, equipByRoom, confirmedSet, currentYear);
+}
+
+function renderFactoryPlanTable(rooms, equipByRoom, confirmedSet, currentYear) {
+  const wrapEl = document.getElementById('factory-plan-wrap');
+  const years = [];
+  for (let y = currentYear - PLAN_OFFSET; y <= currentYear + PLAN_OFFSET; y++) years.push(y);
+
+  const table = document.createElement('table');
+  table.className = 'plan-table';
+
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  const thE = document.createElement('th');
+  thE.className = 'plan-th-equip';
+  thE.textContent = '部屋 / 設備';
+  hr.appendChild(thE);
+  years.forEach(y => {
+    const th = document.createElement('th');
+    th.className = 'plan-th-year' + (y === currentYear ? ' plan-col-current' : '');
+    th.innerHTML = y === currentYear
+      ? `${y}<br><span class="plan-today-label">← 今年</span>`
+      : String(y);
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  rooms.forEach(room => {
+    const equips = equipByRoom[room.id] || [];
+    if (equips.length === 0) return;
+
+    // グループヘッダー行
+    const trHeader = document.createElement('tr');
+    trHeader.className = 'plan-tr-room-header';
+    trHeader.dataset.room = room.id;
+
+    const tdRoomName = document.createElement('td');
+    tdRoomName.className = 'plan-td-room-name';
+    const pendingCnt = equips.filter(e => {
+      const isComplete = state.equipmentStatus[e.id] === 'complete';
+      const isConfirmed = confirmedSet.has(e.id);
+      const info = getCellInfo(e, currentYear, currentYear, isComplete, isConfirmed);
+      return info.type === 'required' || info.type === 'overdue';
+    }).length;
+    const badgeHtml = pendingCnt > 0 ? `<span class="plan-room-badge">${pendingCnt}件</span>` : '';
+    tdRoomName.innerHTML = `<span class="plan-room-toggle">▼</span> ${room.name}${badgeHtml}`;
+    trHeader.appendChild(tdRoomName);
+
+    years.forEach(y => {
+      const td = document.createElement('td');
+      td.className = 'plan-td-cell' + (y === currentYear ? ' plan-col-current' : '');
+      const cnt = equips.filter(e => isTargetYear(e, y)).length;
+      if (cnt > 0) {
+        const cls = y === currentYear ? 'plan-room-badge' : 'plan-room-badge plan-room-badge-muted';
+        td.innerHTML = `<span class="${cls}">${cnt}</span>`;
+      }
+      trHeader.appendChild(td);
+    });
+
+    tbody.appendChild(trHeader);
+
+    // 設備行
+    equips.forEach(equip => {
+      const tr = document.createElement('tr');
+      tr.className = 'plan-tr-equip';
+      tr.dataset.room = room.id;
+
+      const tdE = document.createElement('td');
+      tdE.className = 'plan-td-equip';
+      tdE.innerHTML = `<div class="plan-equip-name">${equip.name}</div><div class="plan-equip-id">EQ-${String(equip.id).padStart(3, '0')}</div>`;
+      tr.appendChild(tdE);
+
+      const isComplete = state.equipmentStatus[equip.id] === 'complete';
+      const isConfirmed = confirmedSet.has(equip.id);
+
+      years.forEach(y => {
+        const td = document.createElement('td');
+        td.className = 'plan-td-cell' + (y === currentYear ? ' plan-col-current' : '');
+        const info = getCellInfo(equip, y, currentYear, isComplete, isConfirmed);
+
+        if (info.type === 'done') {
+          td.innerHTML = '<span class="plan-cell-done">●</span>';
+          td.classList.add('plan-cell-tappable');
+          td.addEventListener('click', () => showDetailModal(equip));
+        } else if (info.type === 'required') {
+          td.innerHTML = '<span class="plan-cell-required">◉</span>';
+          td.classList.add('plan-cell-tappable');
+          td.addEventListener('click', () => {
+            state.currentRoom = rooms.find(r => r.id === equip.room_id);
+            state.currentEquipment = equip;
+            loadInspectionScreen(equip.id);
+            showScreen('inspection');
+          });
+        } else if (info.type === 'confirmed') {
+          td.innerHTML = '<span class="plan-cell-confirmed">✓</span>';
+        } else if (info.type === 'future') {
+          td.innerHTML = '<span class="plan-cell-future">○</span>';
+        } else if (info.type === 'overdue') {
+          td.classList.add('plan-cell-overdue-bg');
+          td.innerHTML = '<span class="plan-cell-overdue">⚠</span>';
+        }
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+
+    // ヘッダータップで折り畳み
+    trHeader.addEventListener('click', () => {
+      const collapsed = trHeader.dataset.collapsed === 'true';
+      trHeader.dataset.collapsed = collapsed ? 'false' : 'true';
+      const toggle = trHeader.querySelector('.plan-room-toggle');
+      if (toggle) toggle.textContent = collapsed ? '▼' : '▶';
+      tbody.querySelectorAll(`.plan-tr-equip[data-room="${room.id}"]`).forEach(row => {
+        row.classList.toggle('plan-row-hidden', !collapsed);
+      });
+    });
+  });
+
+  table.appendChild(tbody);
+  wrapEl.innerHTML = '';
+  wrapEl.appendChild(table);
 }
 
 // ===== 設備一覧 =====
