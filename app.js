@@ -63,8 +63,11 @@ const state = {
   currentFactory: null,
   currentRoom: null,
   currentEquipment: null,
-  factoryProgress: {},   // factoryId -> { done, total }
-  equipmentStatus: {},   // equipmentId -> 'ok'|'ng'|'partial'|null
+  currentEquipments: [],
+  currentConfirmedSet: new Set(),
+  planTableReady: false,
+  factoryProgress: {},
+  equipmentStatus: {},
 };
 
 // ===== 画面遷移 =====
@@ -75,6 +78,15 @@ function showScreen(name) {
     document.getElementById(`screen-${s}`).classList.toggle('active', s === name);
   });
   updateHeader(name);
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab)
+  );
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('active', p.id === `tab-${tab}`)
+  );
 }
 
 function updateHeader(screen) {
@@ -370,6 +382,12 @@ async function loadEquipmentScreen(roomId) {
     </div>
   `;
   summaryBar.classList.remove('hidden');
+
+  state.currentEquipments = equipments;
+  state.currentConfirmedSet = confirmedSet;
+  state.planTableReady = false;
+  document.getElementById('plan-table-wrap').innerHTML = '';
+  switchTab('list');
 }
 
 async function loadEquipmentStatuses(equipIds) {
@@ -407,6 +425,156 @@ async function loadEquipmentStatuses(equipIds) {
     else if (answered.length === itemList.length) state.equipmentStatus[eid] = 'complete';
     else state.equipmentStatus[eid] = 'partial';
   });
+}
+
+// ===== 計画表 =====
+const PLAN_OFFSET = 3;
+
+function isTargetYear(equip, year) {
+  const cycle = equip.inspection_cycle_years || 1;
+  if (!equip.last_inspected_at) return true;
+  const baseYear = new Date(equip.last_inspected_at).getFullYear();
+  return Math.abs(year - baseYear) % cycle === 0;
+}
+
+function getCellInfo(equip, year, currentYear, isComplete, isConfirmed) {
+  if (!isTargetYear(equip, year)) return { type: 'empty' };
+  const baseYear = equip.last_inspected_at
+    ? new Date(equip.last_inspected_at).getFullYear()
+    : null;
+  if (baseYear !== null && year <= baseYear) return { type: 'done' };
+  if (year > currentYear) return { type: 'future' };
+  if (year === currentYear) {
+    if (isComplete) return { type: 'done' };
+    if (isConfirmed) return { type: 'confirmed' };
+    return { type: 'required' };
+  }
+  return { type: 'overdue' };
+}
+
+function renderPlanTable(equipments, confirmedSet, currentYear) {
+  const wrap = document.getElementById('plan-table-wrap');
+  const years = [];
+  for (let y = currentYear - PLAN_OFFSET; y <= currentYear + PLAN_OFFSET; y++) years.push(y);
+
+  const table = document.createElement('table');
+  table.className = 'plan-table';
+
+  // ヘッダー行
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  const thE = document.createElement('th');
+  thE.className = 'plan-th-equip';
+  thE.textContent = '設備';
+  hr.appendChild(thE);
+  years.forEach(y => {
+    const th = document.createElement('th');
+    th.className = 'plan-th-year' + (y === currentYear ? ' plan-col-current' : '');
+    th.innerHTML = y === currentYear
+      ? `${y}<br><span class="plan-today-label">← 今年</span>`
+      : String(y);
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  // データ行
+  const tbody = document.createElement('tbody');
+  equipments.forEach(equip => {
+    const tr = document.createElement('tr');
+    const tdE = document.createElement('td');
+    tdE.className = 'plan-td-equip';
+    tdE.innerHTML = `<div class="plan-equip-name">${equip.name}</div><div class="plan-equip-id">EQ-${String(equip.id).padStart(3, '0')}</div>`;
+    tr.appendChild(tdE);
+
+    const isComplete = state.equipmentStatus[equip.id] === 'complete';
+    const isConfirmed = confirmedSet.has(equip.id);
+
+    years.forEach(y => {
+      const td = document.createElement('td');
+      td.className = 'plan-td-cell' + (y === currentYear ? ' plan-col-current' : '');
+      const info = getCellInfo(equip, y, currentYear, isComplete, isConfirmed);
+
+      if (info.type === 'done') {
+        td.innerHTML = '<span class="plan-cell-done">●</span>';
+        td.classList.add('plan-cell-tappable');
+        td.addEventListener('click', () => showDetailModal(equip));
+      } else if (info.type === 'required') {
+        td.innerHTML = '<span class="plan-cell-required">◉</span>';
+        td.classList.add('plan-cell-tappable');
+        td.addEventListener('click', () => {
+          state.currentEquipment = equip;
+          loadInspectionScreen(equip.id);
+          showScreen('inspection');
+        });
+      } else if (info.type === 'confirmed') {
+        td.innerHTML = '<span class="plan-cell-confirmed">✓</span>';
+      } else if (info.type === 'future') {
+        td.innerHTML = '<span class="plan-cell-future">○</span>';
+      } else if (info.type === 'overdue') {
+        td.classList.add('plan-cell-overdue-bg');
+        td.innerHTML = '<span class="plan-cell-overdue">⚠</span>';
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrap.innerHTML = '';
+  wrap.appendChild(table);
+}
+
+async function showDetailModal(equip) {
+  const modal = document.getElementById('detail-modal');
+  const content = document.getElementById('modal-content');
+  content.innerHTML = '<div class="loading">読み込み中...</div>';
+  modal.classList.remove('hidden');
+
+  const { data: items } = await db
+    .from('inspection_items')
+    .select('id, item_name')
+    .eq('equipment_id', equip.id);
+
+  const itemIds = (items || []).map(i => i.id);
+  let results = [];
+  if (itemIds.length > 0) {
+    const { data: r } = await db
+      .from('inspection_results')
+      .select('inspection_item_id, result, comment')
+      .in('inspection_item_id', itemIds);
+    results = r || [];
+  }
+  const resultMap = {};
+  results.forEach(r => { resultMap[r.inspection_item_id] = r; });
+
+  const lastDate = equip.last_inspected_at ? formatDate(equip.last_inspected_at) : '未設定';
+  const itemRows = (items || []).map(item => {
+    const r = resultMap[item.id];
+    const result = r?.result || '-';
+    const comment = r?.comment ? `<div class="modal-item-comment">${r.comment}</div>` : '';
+    return `<div class="modal-item-row">
+      <span class="modal-item-name">${item.item_name}</span>
+      <span class="modal-item-result ${result === 'OK' ? 'result-ok' : result === 'NG' ? 'result-ng' : ''}">${result}</span>
+      ${comment}
+    </div>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div class="modal-equip-header">
+      <span class="modal-equip-icon">${getEquipIcon(equip.name)}</span>
+      <div>
+        <div class="modal-equip-name">${equip.name}</div>
+        <div class="modal-equip-id">EQ-${String(equip.id).padStart(3, '0')}</div>
+      </div>
+    </div>
+    <div class="modal-meta">
+      <div class="modal-meta-row"><span>前回点検日</span><span>${lastDate}</span></div>
+      <div class="modal-meta-row"><span>点検周期</span><span>${equip.inspection_cycle_years || 1}年</span></div>
+    </div>
+    <div class="modal-items-title">点検項目</div>
+    <div class="modal-items">${itemRows || '<div class="empty-msg">項目なし</div>'}</div>
+  `;
 }
 
 // ===== 点検入力 =====
@@ -523,6 +691,26 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 
 // ===== 初期化 =====
 (async function init() {
+  // タブ切り替え
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      switchTab(tab);
+      if (tab === 'plan' && !state.planTableReady && state.currentEquipments.length > 0) {
+        renderPlanTable(state.currentEquipments, state.currentConfirmedSet, new Date().getFullYear());
+        state.planTableReady = true;
+      }
+    });
+  });
+
+  // モーダル閉じる
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('detail-modal').classList.add('hidden');
+  });
+  document.getElementById('detail-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) document.getElementById('detail-modal').classList.add('hidden');
+  });
+
   await loadFactoriesScreen();
   showScreen('factories');
 })();
