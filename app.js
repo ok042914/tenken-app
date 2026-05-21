@@ -48,6 +48,16 @@ function getEquipIcon(name) {
   return '🔧';
 }
 
+function getNextInspectionYear(equip) {
+  if (!equip.last_inspected_at) return null;
+  return new Date(equip.last_inspected_at).getFullYear() + (equip.inspection_cycle_years || 1);
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 // ===== 状態管理 =====
 const state = {
   currentFactory: null,
@@ -212,7 +222,9 @@ async function loadRoomsScreen(factoryId) {
 // ===== 設備一覧 =====
 async function loadEquipmentScreen(roomId) {
   const list = document.getElementById('equipment-list');
+  const summaryBar = document.getElementById('summary-bar');
   list.innerHTML = '<div class="loading">読み込み中...</div>';
+  summaryBar.classList.add('hidden');
 
   const { data: equipments, error } = await db
     .from('equipment')
@@ -222,31 +234,142 @@ async function loadEquipmentScreen(roomId) {
 
   if (error) { list.innerHTML = '<div class="empty-msg">データ取得エラー</div>'; return; }
 
-  // 設備ごとのステータスを取得
   const equipIds = equipments.map(e => e.id);
   await loadEquipmentStatuses(equipIds);
 
+  const currentYear = new Date().getFullYear();
+  const confirmedSet = new Set();
+  if (equipIds.length > 0) {
+    const { data: confirmations } = await db
+      .from('inspection_results')
+      .select('equipment_id')
+      .in('equipment_id', equipIds)
+      .eq('record_type', 'confirmation')
+      .gte('confirmed_at', `${currentYear}-01-01T00:00:00.000Z`);
+    (confirmations || []).forEach(c => confirmedSet.add(c.equipment_id));
+  }
+
+  let countRequired = 0, countDone = 0, countOutOfScope = 0;
+
   list.innerHTML = '';
   equipments.forEach(equip => {
-    const status = state.equipmentStatus[equip.id];
-    let badge = '';
-    if (status === 'complete') badge = '<span class="card-status">✅</span>';
-    else if (status === 'ng') badge = '<span class="card-status">⚠️</span>';
+    const nextYear = getNextInspectionYear(equip);
+    const isComplete = state.equipmentStatus[equip.id] === 'complete';
+    const isOutOfScope = nextYear !== null && nextYear > currentYear;
+
+    let badgeType, badgeText;
+    if (isOutOfScope) {
+      badgeType = 'outofscope'; badgeText = '対象外';
+      countOutOfScope++;
+    } else if (isComplete) {
+      badgeType = 'done'; badgeText = '完了';
+      countDone++;
+    } else if (nextYear !== null && nextYear < currentYear) {
+      badgeType = 'overdue'; badgeText = '期限超過';
+      countRequired++;
+    } else {
+      badgeType = 'required'; badgeText = '要点検';
+      countRequired++;
+    }
+
+    const lastDateStr = equip.last_inspected_at
+      ? `前回: ${formatDate(equip.last_inspected_at)}`
+      : '前回: 未設定';
+    const nextYearStr = nextYear !== null ? `次回: ${nextYear}年` : '次回: 未設定';
+    const mgmtNo = `EQ-${String(equip.id).padStart(3, '0')}`;
+    const isConfirmed = confirmedSet.has(equip.id);
+
+    let actionHtml = '';
+    if (isOutOfScope) {
+      actionHtml = isConfirmed
+        ? '<div class="confirmed-icon">✅ 確認済</div>'
+        : `<button class="btn-confirm" data-equip-id="${equip.id}">確認済にする</button>`;
+    }
 
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card equip-card' + (isOutOfScope ? ' out-of-scope' : '');
     card.innerHTML = `
-      <div class="card-icon">${getEquipIcon(equip.name)}</div>
-      <div class="card-title">${equip.name}</div>
-      ${badge}
+      <div class="equip-card-header">
+        <div class="card-icon">${getEquipIcon(equip.name)}</div>
+        <div class="equip-card-info">
+          <div class="card-title">${equip.name}</div>
+          <div class="equip-card-id">${mgmtNo}</div>
+        </div>
+        <span class="badge badge-${badgeType}">${badgeText}</span>
+      </div>
+      <div class="equip-card-details">
+        <div class="detail-row">
+          <span class="detail-label">点検周期</span>
+          <span>${equip.inspection_cycle_years || 1}年周期</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">前回点検日</span>
+          <span>${lastDateStr}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">次回点検予定</span>
+          <span>${nextYearStr}</span>
+        </div>
+      </div>
+      ${actionHtml}
     `;
-    card.addEventListener('click', () => {
+
+    card.addEventListener('click', e => {
+      if (e.target.closest('.btn-confirm')) return;
       state.currentEquipment = equip;
       loadInspectionScreen(equip.id);
       showScreen('inspection');
     });
+
+    const btnConfirm = card.querySelector('.btn-confirm');
+    if (btnConfirm) {
+      btnConfirm.addEventListener('click', async e => {
+        e.stopPropagation();
+        btnConfirm.disabled = true;
+        btnConfirm.textContent = '保存中...';
+        const { error: err } = await db.from('inspection_results').insert({
+          equipment_id: equip.id,
+          room_id: state.currentRoom.id,
+          factory_id: state.currentFactory.id,
+          record_type: 'confirmation',
+          confirmed_at: new Date().toISOString(),
+        });
+        if (err) {
+          btnConfirm.disabled = false;
+          btnConfirm.textContent = '確認済にする';
+          alert('保存に失敗しました: ' + err.message);
+          return;
+        }
+        confirmedSet.add(equip.id);
+        const div = document.createElement('div');
+        div.className = 'confirmed-icon';
+        div.textContent = '✅ 確認済';
+        btnConfirm.replaceWith(div);
+      });
+    }
+
     list.appendChild(card);
   });
+
+  summaryBar.innerHTML = `
+    <div class="summary-item">
+      <span class="summary-count">${equipments.length}</span>
+      <span class="summary-label">全設備</span>
+    </div>
+    <div class="summary-item summary-required">
+      <span class="summary-count">${countRequired}</span>
+      <span class="summary-label">要点検</span>
+    </div>
+    <div class="summary-item summary-done">
+      <span class="summary-count">${countDone}</span>
+      <span class="summary-label">完了</span>
+    </div>
+    <div class="summary-item summary-out">
+      <span class="summary-count">${countOutOfScope}</span>
+      <span class="summary-label">対象外</span>
+    </div>
+  `;
+  summaryBar.classList.remove('hidden');
 }
 
 async function loadEquipmentStatuses(equipIds) {

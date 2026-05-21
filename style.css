@@ -351,6 +351,142 @@ main {
   font-size: 15px;
 }
 
+/* ===== Summary Bar ===== */
+.summary-bar {
+  display: flex;
+  gap: 8px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 12px;
+  margin-bottom: 14px;
+}
+
+.summary-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.summary-count {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.summary-required .summary-count { color: #E53E3E; }
+.summary-done    .summary-count { color: #276749; }
+.summary-out     .summary-count { color: #6B7280; }
+
+/* ===== Equipment Card List ===== */
+.equip-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.equip-card {
+  flex-direction: column;
+  gap: 0;
+}
+
+.equip-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.equip-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.equip-card-id {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.equip-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0 4px;
+  border-top: 1px solid #F0F3F5;
+  margin-top: 12px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.detail-label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ===== Badges ===== */
+.badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.badge-required  { background: #FFE5E5; color: #C53030; }
+.badge-done      { background: #E6FFED; color: #276749; }
+.badge-outofscope{ background: #F0F2F5; color: #6B7280; }
+.badge-overdue   { background: #FFF3E0; color: #C05621; }
+
+/* ===== Out-of-scope card ===== */
+.out-of-scope {
+  opacity: 0.5;
+}
+
+/* ===== Confirm Button ===== */
+.btn-confirm {
+  display: block;
+  width: 100%;
+  height: 44px;
+  background: #F0F2F5;
+  color: #636E72;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-confirm:hover  { background: #DFE6E9; }
+.btn-confirm:active { background: #CDD6DC; }
+.btn-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ===== Confirmed Icon ===== */
+.confirmed-icon {
+  text-align: center;
+  font-size: 14px;
+  color: var(--ok);
+  font-weight: 600;
+  padding: 10px 0 4px;
+  margin-top: 8px;
+}
+
 /* ===== Responsive ===== */
 @media (min-width: 480px) {
   main { padding: 20px; }
